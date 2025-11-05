@@ -562,9 +562,16 @@ async fn interactions(req: HttpRequest, body: web::Bytes) -> impl Responder {
 async fn main() -> std::io::Result<()> {
     dotenv().ok();
 
-    println!("Listening on 0.0.0.0:8080");
+    // Get server configuration from environment variables with defaults
+    let host = env::var("SERVER_HOST").unwrap_or_else(|_| "0.0.0.0".to_string());
+    let port = env::var("SERVER_PORT")
+        .ok()
+        .and_then(|p| p.parse::<u16>().ok())
+        .unwrap_or(8547);
+
+    println!("Listening on {}:{}", host, port);
     HttpServer::new(move || App::new().service(interactions))
-        .bind(("0.0.0.0", 8080))?
+        .bind((host.as_str(), port))?
         .run()
         .await
 }
