@@ -305,8 +305,9 @@ async fn interactions(req: HttpRequest, body: web::Bytes) -> impl Responder {
                             .await;
 
                         match minecraft_response {
-                            Ok(resp) if resp.status().is_success() => {
-                                // Parse response from Minecraft server
+                            Ok(resp) => {
+                                let status = resp.status();
+                                // Try to parse the response body as JSON regardless of status code
                                 match resp.json::<MinecraftLinkResponse>().await {
                                     Ok(link_data) if link_data.success => {
                                         let minecraft_username = link_data
@@ -404,11 +405,11 @@ async fn interactions(req: HttpRequest, body: web::Bytes) -> impl Responder {
                                         HttpResponse::Ok().json(response)
                                     }
                                     Ok(link_data) => {
-                                        // Failed response from Minecraft server
-                                        let error_message =
-                                            link_data.message.unwrap_or_else(|| {
-                                                "Unknown error occurred".to_string()
-                                            });
+                                        // Failed response from Minecraft server (success: false)
+                                        // This handles both 200 OK with success:false and error status codes
+                                        let error_message = link_data.message.unwrap_or_else(|| {
+                                            format!("Verification failed (HTTP {})", status.as_u16())
+                                        });
 
                                         // Sanitize error message to prevent injection
                                         let safe_error_message = error_message
@@ -416,10 +417,12 @@ async fn interactions(req: HttpRequest, body: web::Bytes) -> impl Responder {
                                             .filter(|c| {
                                                 c.is_alphanumeric()
                                                     || c.is_whitespace()
-                                                    || ".,!?-_()[]".contains(*c)
+                                                    || ".,!?-_()[]:'\"".contains(*c)
                                             })
                                             .take(500) // Limit length
                                             .collect::<String>();
+
+                                        eprintln!("Minecraft server returned error: {}", safe_error_message);
 
                                         let response = serde_json::json!({
                                             "type": 4,
@@ -442,8 +445,10 @@ async fn interactions(req: HttpRequest, body: web::Bytes) -> impl Responder {
                                         HttpResponse::Ok().json(response)
                                     }
                                     Err(e) => {
+                                        // Failed to parse JSON response
                                         eprintln!(
-                                            "Failed to parse Minecraft server response: {}",
+                                            "Failed to parse Minecraft server response (HTTP {}): {}",
+                                            status.as_u16(),
                                             e
                                         );
                                         let response = serde_json::json!({
@@ -451,7 +456,7 @@ async fn interactions(req: HttpRequest, body: web::Bytes) -> impl Responder {
                                             "data": {
                                                 "embeds": [{
                                                     "title": ":no: Verification Failed",
-                                                    "description": "Failed to parse response from Minecraft server. Please try again later.",
+                                                    "description": format!("The Minecraft server returned an invalid response (HTTP {}). Please try again later.", status.as_u16()),
                                                     "color": 0xFF0000
                                                 }],
                                                 "flags": 64
@@ -461,25 +466,8 @@ async fn interactions(req: HttpRequest, body: web::Bytes) -> impl Responder {
                                     }
                                 }
                             }
-                            Ok(resp) => {
-                                // Non-success status code
-                                let status = resp.status();
-                                eprintln!("Minecraft server error: {}", status);
-                                let response = serde_json::json!({
-                                    "type": 4,
-                                    "data": {
-                                        "embeds": [{
-                                            "title": ":no: Verification Failed",
-                                            "description": "The Minecraft server is currently unavailable. Please try again later.",
-                                            "color": 0xFF0000
-                                        }],
-                                        "flags": 64
-                                    }
-                                });
-                                HttpResponse::Ok().json(response)
-                            }
                             Err(e) => {
-                                // Request failed
+                                // Request failed (network error, timeout, etc.)
                                 eprintln!("Failed to connect to Minecraft server: {}", e);
                                 let response = serde_json::json!({
                                     "type": 4,
