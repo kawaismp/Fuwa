@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="CopilotDiffPersistence">
+    <option name="pendingDiffs">
+      <map>
+        <entry key="$PROJECT_DIR$/src/lib.rs">
+          <value>
+            <PendingDiffInfo>
+              <option name="filePath" value="$PROJECT_DIR$/src/lib.rs" />
+              <option name="originalContent" value="pub mod config;&#10;pub mod discord;&#10;pub mod commands;&#10;&#10;pub use config::Config;&#10;use std::env;&#10;&#10;#[derive(Debug, Clone)]&#10;pub struct Config {&#10;    pub discord_app_id: String,&#10;    pub discord_guild_id: String,&#10;    pub discord_bot_token: String,&#10;    pub discord_public_key: String,&#10;    pub minecraft_link_api_url: String,&#10;    pub secret_key: String,&#10;}&#10;&#10;impl Config {&#10;    pub fn from_env() -&gt; Result&lt;Self, String&gt; {&#10;        Ok(Self {&#10;            discord_app_id: env::var(&quot;DISCORD_APP_ID&quot;)&#10;                .map_err(|_| &quot;Missing DISCORD_APP_ID environment variable&quot;)?,&#10;            discord_guild_id: env::var(&quot;DISCORD_GUILD_ID&quot;)&#10;                .map_err(|_| &quot;Missing DISCORD_GUILD_ID environment variable&quot;)?,&#10;            discord_bot_token: env::var(&quot;DISCORD_BOT_TOKEN&quot;)&#10;                .map_err(|_| &quot;Missing DISCORD_BOT_TOKEN environment variable&quot;)?,&#10;            discord_public_key: env::var(&quot;DISCORD_PUBLIC_KEY&quot;)&#10;                .map_err(|_| &quot;Missing DISCORD_PUBLIC_KEY environment variable&quot;)?,&#10;            minecraft_link_api_url: env::var(&quot;MINECRAFT_LINK_API_URL&quot;)&#10;                .unwrap_or_else(|_| &quot;http://localhost:25565/link&quot;.to_string()),&#10;            secret_key: env::var(&quot;SECRET_KEY&quot;)&#10;                .unwrap_or_else(|_| &quot;default_secret&quot;.to_string()),&#10;        })&#10;    }&#10;&#10;    pub fn commands_url(&amp;self) -&gt; String {&#10;        format!(&#10;            &quot;https://discord.com/api/v10/applications/{}/guilds/{}/commands&quot;,&#10;            self.discord_app_id, self.discord_guild_id&#10;        )&#10;    }&#10;&#10;    pub fn auth_header(&amp;self) -&gt; String {&#10;        format!(&quot;Bot {}&quot;, self.discord_bot_token)&#10;    }&#10;}&#10;&#10;" />
+              <option name="updatedContent" value="pub mod config;&#10;pub mod discord;&#10;pub mod commands;&#10;&#10;pub use config::Config;" />
+            </PendingDiffInfo>
+          </value>
+        </entry>
+      </map>
+    </option>
+  </component>
+</project>

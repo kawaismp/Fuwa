@@ -1,0 +1,21 @@
+[package]
+name = "fuwa"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "fuwa"
+path = "src/main.rs"
+
+[[bin]]
+name = "register_command"
+path = "src/bin/register_command.rs"
+
+[dependencies]
+actix-web = "4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+ed25519-dalek = "2"
+hex = "0.4"
+dotenvy = "0.15"
+reqwest = { version = "0.12", features = ["json", "blocking"] }
