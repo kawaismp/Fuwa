@@ -171,7 +171,7 @@ async fn interactions(req: HttpRequest, body: web::Bytes) -> impl Responder {
                                 "type": 4,
                                 "data": {
                                     "embeds": [{
-                                        "title": ":no: Verification Failed",
+                                        "title": "<:no:826338754650046464> Verification Failed",
                                         "description": "Invalid Discord user ID format.",
                                         "color": 0xFF0000
                                     }],
@@ -198,7 +198,7 @@ async fn interactions(req: HttpRequest, body: web::Bytes) -> impl Responder {
                                 "type": 4,
                                 "data": {
                                     "embeds": [{
-                                        "title": ":no: Verification Failed",
+                                        "title": "<:no:826338754650046464> Verification Failed",
                                         "description": "Invalid code format. Please provide a 6-digit code (000000-999999).",
                                         "color": 0xFF0000
                                     }],
@@ -217,7 +217,7 @@ async fn interactions(req: HttpRequest, body: web::Bytes) -> impl Responder {
                                     "type": 4,
                                     "data": {
                                         "embeds": [{
-                                            "title": ":no: Configuration Error",
+                                            "title": "<:no:826338754650046464> Configuration Error",
                                             "description": "Server is not properly configured. Please contact an administrator.",
                                             "color": 0xFF0000
                                         }],
@@ -240,7 +240,7 @@ async fn interactions(req: HttpRequest, body: web::Bytes) -> impl Responder {
                                 "type": 4,
                                 "data": {
                                     "embeds": [{
-                                        "title": ":no: Configuration Error",
+                                        "title": "<:no:826338754650046464> Configuration Error",
                                         "description": "Server is not properly configured. Please contact an administrator.",
                                         "color": 0xFF0000
                                     }],
@@ -259,7 +259,7 @@ async fn interactions(req: HttpRequest, body: web::Bytes) -> impl Responder {
                                     "type": 4,
                                     "data": {
                                         "embeds": [{
-                                            "title": ":no: Configuration Error",
+                                            "title": "<:no:826338754650046464> Configuration Error",
                                             "description": "Server is not properly configured. Please contact an administrator.",
                                             "color": 0xFF0000
                                         }],
@@ -283,7 +283,7 @@ async fn interactions(req: HttpRequest, body: web::Bytes) -> impl Responder {
                                     "type": 4,
                                     "data": {
                                         "embeds": [{
-                                            "title": ":no: Server Error",
+                                            "title": "<:no:826338754650046464> Server Error",
                                             "description": "An internal error occurred. Please try again later.",
                                             "color": 0xFF0000
                                         }],
@@ -380,7 +380,7 @@ async fn interactions(req: HttpRequest, body: web::Bytes) -> impl Responder {
                                             "type": 4,
                                             "data": {
                                                 "embeds": [{
-                                                    "title": ":yes: Account Linked Successfully!",
+                                                    "title": "<:yes:826338663385661481> Account Linked Successfully!",
                                                     "description": format!("Your Discord account has been linked to Minecraft account: **{}**", safe_minecraft_username),
                                                     "color": 0x00FF00,
                                                     "fields": [
@@ -428,16 +428,9 @@ async fn interactions(req: HttpRequest, body: web::Bytes) -> impl Responder {
                                             "type": 4,
                                             "data": {
                                                 "embeds": [{
-                                                    "title": ":no: Verification Failed",
+                                                    "title": "<:no:826338754650046464> Verification Failed",
                                                     "description": safe_error_message,
                                                     "color": 0xFF0000,
-                                                    "fields": [
-                                                        {
-                                                            "name": "What to do?",
-                                                            "value": "1. Join the KAWAISMP Minecraft server\n2. Run `/link` to generate a new code\n3. Use `/verify <code>` here in Discord",
-                                                            "inline": false
-                                                        }
-                                                    ]
                                                 }],
                                                 "flags": 64
                                             }
@@ -455,7 +448,7 @@ async fn interactions(req: HttpRequest, body: web::Bytes) -> impl Responder {
                                             "type": 4,
                                             "data": {
                                                 "embeds": [{
-                                                    "title": ":no: Verification Failed",
+                                                    "title": "<:no:826338754650046464> Verification Failed",
                                                     "description": format!("The Minecraft server returned an invalid response (HTTP {}). Please try again later.", status.as_u16()),
                                                     "color": 0xFF0000
                                                 }],
@@ -473,7 +466,7 @@ async fn interactions(req: HttpRequest, body: web::Bytes) -> impl Responder {
                                     "type": 4,
                                     "data": {
                                         "embeds": [{
-                                            "title": ":no: Connection Failed",
+                                            "title": "<:no:826338754650046464> Connection Failed",
                                             "description": "Could not connect to Minecraft server. Please try again later.",
                                             "color": 0xFF0000
                                         }],
