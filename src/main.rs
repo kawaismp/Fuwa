@@ -4,6 +4,7 @@ use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use serde::Deserialize;
 use std::env;
 use std::time::Duration;
+use thiserror::Error;
 
 #[derive(Deserialize)]
 struct Interaction {
@@ -43,8 +44,82 @@ struct MinecraftLinkResponse {
     message: Option<String>,
 }
 
+#[derive(Error, Debug)]
+enum InteractionError {
+    #[error("Missing or invalid headers: {0}")]
+    Header(String),
+    #[error("Invalid signature: {0}")]
+    Signature(String),
+    #[error("Invalid JSON body: {0}")]
+    Json(#[from] serde_json::Error),
+    #[error("Server config error: {0}")]
+    Config(String),
+    #[error("Network error: {0}")]
+    Network(#[from] reqwest::Error),
+    #[error("Verification failed: {0}")]
+    Verification(String),
+    #[error("Internal error: {0}")]
+    Internal(String),
+}
+
+fn error_response(error: &InteractionError) -> HttpResponse {
+    tracing::error!(target: "interaction", "{}", error);
+    let (title, description, color) = match error {
+        InteractionError::Header(_) => (
+            "<:no:826338754650046464> Unauthorized",
+            "Missing or invalid request headers.",
+            0xFF0000,
+        ),
+        InteractionError::Signature(_) => (
+            "<:no:826338754650046464> Invalid Request",
+            "The request signature could not be verified.",
+            0xFF0000,
+        ),
+        InteractionError::Config(_) => (
+            "<:no:826338754650046464> Server Configuration Error",
+            "Server is not properly configured. Please contact an admin.",
+            0xFF0000,
+        ),
+        InteractionError::Network(_) => (
+            "<:no:826338754650046464> Connection Error",
+            "Could not reach Minecraft server. Please try again later.",
+            0xFF0000,
+        ),
+        InteractionError::Verification(msg) => (
+            "<:no:826338754650046464> Verification Failed",
+            msg.as_str(),
+            0xFF0000,
+        ),
+        _ => (
+            "<:no:826338754650046464> Internal Error",
+            "An unexpected error occurred.",
+            0xFF0000,
+        ),
+    };
+
+    let response = serde_json::json!({
+        "type": 4,
+        "data": {
+            "embeds": [{
+                "title": title,
+                "description": description,
+                "color": color
+            }],
+            "flags": 64
+        }
+    });
+    HttpResponse::Ok().json(response)
+}
+
 #[post("/interactions")]
 async fn interactions(req: HttpRequest, body: web::Bytes) -> impl Responder {
+    match handle_interaction(req, body).await {
+        Ok(resp) => resp,
+        Err(e) => error_response(&e),
+    }
+}
+
+async fn handle_interaction(req: HttpRequest, body: web::Bytes) -> Result<HttpResponse, InteractionError> {
     // Step 1: Verify Discord signature
     let signature = req
         .headers()
@@ -56,7 +131,7 @@ async fn interactions(req: HttpRequest, body: web::Bytes) -> impl Responder {
         .and_then(|v| v.to_str().ok());
 
     if signature.is_none() || timestamp.is_none() {
-        return HttpResponse::Unauthorized().body("Missing signature or timestamp");
+        return Err(InteractionError::Header("Missing signature or timestamp".into()));
     }
 
     let signature_str = signature.unwrap();
@@ -72,10 +147,10 @@ async fn interactions(req: HttpRequest, body: web::Bytes) -> impl Responder {
         let time_diff = (current_time - timestamp_value).abs();
         if time_diff > 300 {
             // 5 minutes = 300 seconds
-            return HttpResponse::Unauthorized().body("Request timestamp too old or invalid");
+            return Err(InteractionError::Header("Request timestamp too old or invalid".into()));
         }
     } else {
-        return HttpResponse::Unauthorized().body("Invalid timestamp format");
+        return Err(InteractionError::Header("Invalid timestamp format".into()));
     }
 
     // Safely get and validate the public key
@@ -83,7 +158,7 @@ async fn interactions(req: HttpRequest, body: web::Bytes) -> impl Responder {
         Ok(key) if !key.is_empty() => key,
         _ => {
             eprintln!("DISCORD_PUBLIC_KEY not configured");
-            return HttpResponse::InternalServerError().body("Server configuration error");
+            return Err(InteractionError::Config("DISCORD_PUBLIC_KEY not configured".into()));
         }
     };
 
@@ -92,11 +167,11 @@ async fn interactions(req: HttpRequest, body: web::Bytes) -> impl Responder {
         Ok(bytes) if bytes.len() == 32 => bytes,
         Ok(_) => {
             eprintln!("Invalid public key length");
-            return HttpResponse::InternalServerError().body("Server configuration error");
+            return Err(InteractionError::Config("Invalid public key length".into()));
         }
         Err(e) => {
             eprintln!("Failed to decode public key: {}", e);
-            return HttpResponse::InternalServerError().body("Server configuration error");
+            return Err(InteractionError::Config("Failed to decode public key".into()));
         }
     };
 
@@ -104,7 +179,7 @@ async fn interactions(req: HttpRequest, body: web::Bytes) -> impl Responder {
         Ok(arr) => arr,
         Err(_) => {
             eprintln!("Failed to convert key bytes to array");
-            return HttpResponse::InternalServerError().body("Server configuration error");
+            return Err(InteractionError::Config("Failed to convert key bytes to array".into()));
         }
     };
 
@@ -112,42 +187,37 @@ async fn interactions(req: HttpRequest, body: web::Bytes) -> impl Responder {
         Ok(key) => key,
         Err(e) => {
             eprintln!("Failed to create verifying key: {}", e);
-            return HttpResponse::InternalServerError().body("Server configuration error");
+            return Err(InteractionError::Config("Failed to create verifying key".into()));
         }
     };
 
     // Safely decode signature
     let sig_bytes = match hex::decode(signature_str) {
         Ok(bytes) if bytes.len() == 64 => bytes,
-        Ok(_) => return HttpResponse::Unauthorized().body("Invalid signature length"),
-        Err(_) => return HttpResponse::Unauthorized().body("Invalid signature format"),
+        Ok(_) => return Err(InteractionError::Signature("Invalid signature length".into())),
+        Err(_) => return Err(InteractionError::Signature("Invalid signature format".into())),
     };
 
     let sig_array: [u8; 64] = match sig_bytes.try_into() {
         Ok(arr) => arr,
-        Err(_) => return HttpResponse::Unauthorized().body("Invalid signature"),
+        Err(_) => return Err(InteractionError::Signature("Invalid signature".into())),
     };
 
     let signature = Signature::from_bytes(&sig_array);
 
     let message = [timestamp_str.as_bytes(), &body].concat();
     if verifying_key.verify(&message, &signature).is_err() {
-        return HttpResponse::Unauthorized().body("Invalid request signature");
+        return Err(InteractionError::Signature("Invalid request signature".into()));
     }
 
     // Step 2: Parse the payload
-    let Ok(interaction): Result<Interaction, _> = serde_json::from_slice(&body) else {
-        return HttpResponse::BadRequest().body("Invalid JSON");
-    };
+    let interaction: Interaction = serde_json::from_slice(&body)?;
 
     // Step 3: Respond based on type
     match interaction.interaction_type {
-        1 => {
-            // PING -> respond with PONG
-            HttpResponse::Ok()
-                .content_type("application/json")
-                .body(r#"{"type":1}"#)
-        }
+        1 => Ok(HttpResponse::Ok()
+            .content_type("application/json")
+            .body(r#"{"type":1}"#)),
         2 => {
             // APPLICATION_COMMAND (slash command)
             if let Some(data) = &interaction.data {
@@ -159,7 +229,7 @@ async fn interactions(req: HttpRequest, body: web::Bytes) -> impl Responder {
                         } else if let Some(user) = &interaction.user {
                             user.id.clone()
                         } else {
-                            return HttpResponse::BadRequest().body("Cannot determine user ID");
+                            return Err(InteractionError::Verification("Cannot determine user ID".into()));
                         };
 
                         // Validate Discord ID format (should be numeric and reasonable length)
@@ -167,18 +237,7 @@ async fn interactions(req: HttpRequest, body: web::Bytes) -> impl Responder {
                             || discord_id.len() > 20
                             || !discord_id.chars().all(|c| c.is_ascii_digit())
                         {
-                            let response = serde_json::json!({
-                                "type": 4,
-                                "data": {
-                                    "embeds": [{
-                                        "title": "<:no:826338754650046464> Verification Failed",
-                                        "description": "Invalid Discord user ID format.",
-                                        "color": 0xFF0000
-                                    }],
-                                    "flags": 64
-                                }
-                            });
-                            return HttpResponse::Ok().json(response);
+                            return Err(InteractionError::Verification("Invalid Discord user ID format.".into()));
                         }
 
                         // Extract the code from command options
@@ -193,106 +252,31 @@ async fn interactions(req: HttpRequest, body: web::Bytes) -> impl Responder {
                             None
                         };
 
-                        let Some(code) = code else {
-                            let response = serde_json::json!({
-                                "type": 4,
-                                "data": {
-                                    "embeds": [{
-                                        "title": "<:no:826338754650046464> Verification Failed",
-                                        "description": "Invalid code format. Please provide a 6-digit code (000000-999999).",
-                                        "color": 0xFF0000
-                                    }],
-                                    "flags": 64
-                                }
-                            });
-                            return HttpResponse::Ok().json(response);
-                        };
+                        if code.is_none() {
+                            return Err(InteractionError::Verification("Invalid code format. Please provide a 6-digit code (000000-999999).".into()));
+                        }
+                        let code = code.unwrap();
 
                         // Get and validate Minecraft API URL
-                        let minecraft_api_url = match env::var("MINECRAFT_LINK_API_URL") {
-                            Ok(url) if !url.is_empty() => url,
-                            _ => {
-                                eprintln!("MINECRAFT_LINK_API_URL not configured");
-                                let response = serde_json::json!({
-                                    "type": 4,
-                                    "data": {
-                                        "embeds": [{
-                                            "title": "<:no:826338754650046464> Configuration Error",
-                                            "description": "Server is not properly configured. Please contact an administrator.",
-                                            "color": 0xFF0000
-                                        }],
-                                        "flags": 64
-                                    }
-                                });
-                                return HttpResponse::Ok().json(response);
-                            }
-                        };
+                        let minecraft_api_url = env::var("MINECRAFT_LINK_API_URL")
+                            .map_err(|_| InteractionError::Config("MINECRAFT_LINK_API_URL not configured".into()))?;
 
-                        // Validate URL format
-                        if !minecraft_api_url.starts_with("http://")
-                            && !minecraft_api_url.starts_with("https://")
-                        {
-                            eprintln!(
-                                "Invalid MINECRAFT_LINK_API_URL format: {}",
-                                minecraft_api_url
-                            );
-                            let response = serde_json::json!({
-                                "type": 4,
-                                "data": {
-                                    "embeds": [{
-                                        "title": "<:no:826338754650046464> Configuration Error",
-                                        "description": "Server is not properly configured. Please contact an administrator.",
-                                        "color": 0xFF0000
-                                    }],
-                                    "flags": 64
-                                }
-                            });
-                            return HttpResponse::Ok().json(response);
+                        if minecraft_api_url.is_empty() || (!minecraft_api_url.starts_with("http://") && !minecraft_api_url.starts_with("https://")) {
+                            return Err(InteractionError::Config("Invalid MINECRAFT_LINK_API_URL format".into()));
                         }
 
-                        // Get and validate secret key - MUST be configured, no default
-                        let secret_key = match env::var("SECRET_KEY") {
-                            Ok(key) if !key.is_empty() && key != "default_secret" => key,
-                            _ => {
-                                eprintln!("SECRET_KEY not properly configured");
-                                let response = serde_json::json!({
-                                    "type": 4,
-                                    "data": {
-                                        "embeds": [{
-                                            "title": "<:no:826338754650046464> Configuration Error",
-                                            "description": "Server is not properly configured. Please contact an administrator.",
-                                            "color": 0xFF0000
-                                        }],
-                                        "flags": 64
-                                    }
-                                });
-                                return HttpResponse::Ok().json(response);
-                            }
-                        };
+                        // Get and validate secret key
+                        let secret_key = env::var("SECRET_KEY")
+                            .map_err(|_| InteractionError::Config("SECRET_KEY not configured".into()))?;
+                        if secret_key.is_empty() || secret_key == "default_secret" {
+                            return Err(InteractionError::Config("SECRET_KEY not properly configured".into()));
+                        }
 
                         // Create HTTP client with timeout
-                        let client = match reqwest::Client::builder()
+                        let client = reqwest::Client::builder()
                             .timeout(Duration::from_secs(10))
                             .connect_timeout(Duration::from_secs(5))
-                            .build()
-                        {
-                            Ok(client) => client,
-                            Err(e) => {
-                                eprintln!("Failed to create HTTP client: {}", e);
-                                let response = serde_json::json!({
-                                    "type": 4,
-                                    "data": {
-                                        "embeds": [{
-                                            "title": "<:no:826338754650046464> Server Error",
-                                            "description": "An internal error occurred. Please try again later.",
-                                            "color": 0xFF0000
-                                        }],
-                                        "flags": 64
-                                    }
-                                });
-                                return HttpResponse::Ok().json(response);
-                            }
-                        };
+                            .build()?;
 
                         let minecraft_response = client
                             .get(&minecraft_api_url)
@@ -302,179 +286,110 @@ async fn interactions(req: HttpRequest, body: web::Bytes) -> impl Responder {
                                 ("discord_id", &discord_id),
                             ])
                             .send()
-                            .await;
+                            .await?;
 
-                        match minecraft_response {
-                            Ok(resp) => {
-                                let status = resp.status();
-                                // Try to parse the response body as JSON regardless of status code
-                                match resp.json::<MinecraftLinkResponse>().await {
-                                    Ok(link_data) if link_data.success => {
-                                        let minecraft_username = link_data
-                                            .minecraft_username
-                                            .unwrap_or_else(|| "Unknown".to_string());
+                        let status = minecraft_response.status();
+                        let link_data: MinecraftLinkResponse = minecraft_response.json().await?;
 
-                                        // Validate minecraft username (basic sanitization)
-                                        let safe_minecraft_username = if minecraft_username.len()
-                                            <= 16
-                                            && minecraft_username
-                                                .chars()
-                                                .all(|c| c.is_alphanumeric() || c == '_')
-                                        {
-                                            minecraft_username.clone()
-                                        } else {
-                                            "Unknown".to_string()
-                                        };
+                        if link_data.success {
+                            let minecraft_username = link_data
+                                .minecraft_username
+                                .unwrap_or_else(|| "Unknown".to_string());
 
-                                        // Attempt to assign verified role on Discord
-                                        let guild_id =
-                                            env::var("DISCORD_GUILD_ID").unwrap_or_default();
-                                        let role_id = env::var("DISCORD_VERIFIED_ROLE_ID")
-                                            .unwrap_or_default();
-                                        let bot_token =
-                                            env::var("DISCORD_BOT_TOKEN").unwrap_or_default();
+                            // Validate minecraft username (basic sanitization)
+                            let safe_minecraft_username = if minecraft_username.len() <= 16
+                                && minecraft_username.chars().all(|c| c.is_alphanumeric() || c == '_')
+                            {
+                                minecraft_username.clone()
+                            } else {
+                                "Unknown".to_string()
+                            };
 
-                                        if !guild_id.is_empty()
-                                            && !role_id.is_empty()
-                                            && !bot_token.is_empty()
-                                            && guild_id.chars().all(|c| c.is_ascii_digit())
-                                            && role_id.chars().all(|c| c.is_ascii_digit())
-                                        {
-                                            let discord_url = format!(
-                                                "https://discord.com/api/v10/guilds/{}/members/{}/roles/{}",
-                                                guild_id, discord_id, role_id
-                                            );
+                            // Attempt to assign verified role on Discord
+                            let guild_id = env::var("DISCORD_GUILD_ID").unwrap_or_default();
+                            let role_id = env::var("DISCORD_VERIFIED_ROLE_ID").unwrap_or_default();
+                            let bot_token = env::var("DISCORD_BOT_TOKEN").unwrap_or_default();
 
-                                            // Send PUT request to add role (Discord returns 204 No Content on success)
-                                            match client
-                                                .put(&discord_url)
-                                                .header(
-                                                    "Authorization",
-                                                    format!("Bot {}", bot_token),
-                                                )
-                                                .header("Content-Type", "application/json")
-                                                .send()
-                                                .await
-                                            {
-                                                Ok(resp) => {
-                                                    if !resp.status().is_success() {
-                                                        // Role assignment failed; continue without failing the command
-                                                        eprintln!(
-                                                            "Failed to assign role: {} - {}",
-                                                            resp.status(),
-                                                            resp.text().await.unwrap_or_default()
-                                                        );
-                                                    }
-                                                }
-                                                Err(err) => {
-                                                    eprintln!("Error assigning role: {}", err);
-                                                }
-                                            }
-                                        } else {
-                                            eprintln!(
-                                                "Discord guild/role/token not configured or invalid format; skipping role assignment"
+                            if !guild_id.is_empty()
+                                && !role_id.is_empty()
+                                && !bot_token.is_empty()
+                                && guild_id.chars().all(|c| c.is_ascii_digit())
+                                && role_id.chars().all(|c| c.is_ascii_digit())
+                            {
+                                let discord_url = format!(
+                                    "https://discord.com/api/v10/guilds/{}/members/{}/roles/{}",
+                                    guild_id, discord_id, role_id
+                                );
+
+                                match client
+                                    .put(&discord_url)
+                                    .header("Authorization", format!("Bot {}", bot_token))
+                                    .header("Content-Type", "application/json")
+                                    .send()
+                                    .await
+                                {
+                                    Ok(resp) => {
+                                        if !resp.status().is_success() {
+                                            tracing::error!(
+                                                "Failed to assign role: {} - {}",
+                                                resp.status(),
+                                                resp.text().await.unwrap_or_default()
                                             );
                                         }
-
-                                        let response = serde_json::json!({
-                                            "type": 4,
-                                            "data": {
-                                                "embeds": [{
-                                                    "title": "<:yes:826338663385661481> Account Linked Successfully!",
-                                                    "description": format!("Your Discord account has been linked to Minecraft account: **{}**", safe_minecraft_username),
-                                                    "color": 0x00FF00,
-                                                    "fields": [
-                                                        {
-                                                            "name": "Minecraft Username",
-                                                            "value": safe_minecraft_username,
-                                                            "inline": true
-                                                        },
-                                                        {
-                                                            "name": "Discord ID",
-                                                            "value": discord_id,
-                                                            "inline": true
-                                                        }
-                                                    ],
-                                                    "footer": {
-                                                        "text": "Your accounts are now linked!"
-                                                    }
-                                                }],
-                                                "flags": 64
-                                            }
-                                        });
-                                        HttpResponse::Ok().json(response)
                                     }
-                                    Ok(link_data) => {
-                                        // Failed response from Minecraft server (success: false)
-                                        // This handles both 200 OK with success:false and error status codes
-                                        let error_message = link_data.message.unwrap_or_else(|| {
-                                            format!("Verification failed (HTTP {})", status.as_u16())
-                                        });
-
-                                        // Sanitize error message to prevent injection
-                                        let safe_error_message = error_message
-                                            .chars()
-                                            .filter(|c| {
-                                                c.is_alphanumeric()
-                                                    || c.is_whitespace()
-                                                    || ".,!?-_()[]:'\"".contains(*c)
-                                            })
-                                            .take(500) // Limit length
-                                            .collect::<String>();
-
-                                        eprintln!("Minecraft server returned error: {}", safe_error_message);
-
-                                        let response = serde_json::json!({
-                                            "type": 4,
-                                            "data": {
-                                                "embeds": [{
-                                                    "title": "<:no:826338754650046464> Verification Failed",
-                                                    "description": safe_error_message,
-                                                    "color": 0xFF0000,
-                                                }],
-                                                "flags": 64
-                                            }
-                                        });
-                                        HttpResponse::Ok().json(response)
-                                    }
-                                    Err(e) => {
-                                        // Failed to parse JSON response
-                                        eprintln!(
-                                            "Failed to parse Minecraft server response (HTTP {}): {}",
-                                            status.as_u16(),
-                                            e
-                                        );
-                                        let response = serde_json::json!({
-                                            "type": 4,
-                                            "data": {
-                                                "embeds": [{
-                                                    "title": "<:no:826338754650046464> Verification Failed",
-                                                    "description": format!("The Minecraft server returned an invalid response (HTTP {}). Please try again later.", status.as_u16()),
-                                                    "color": 0xFF0000
-                                                }],
-                                                "flags": 64
-                                            }
-                                        });
-                                        HttpResponse::Ok().json(response)
+                                    Err(err) => {
+                                        tracing::error!("Error assigning role: {}", err);
                                     }
                                 }
+                            } else {
+                                tracing::warn!("Discord guild/role/token not configured or invalid format; skipping role assignment");
                             }
-                            Err(e) => {
-                                // Request failed (network error, timeout, etc.)
-                                eprintln!("Failed to connect to Minecraft server: {}", e);
-                                let response = serde_json::json!({
-                                    "type": 4,
-                                    "data": {
-                                        "embeds": [{
-                                            "title": "<:no:826338754650046464> Connection Failed",
-                                            "description": "Could not connect to Minecraft server. Please try again later.",
-                                            "color": 0xFF0000
-                                        }],
-                                        "flags": 64
-                                    }
-                                });
-                                HttpResponse::Ok().json(response)
-                            }
+
+                            let response = serde_json::json!({
+                                "type": 4,
+                                "data": {
+                                    "embeds": [{
+                                        "title": "<:yes:826338663385661481> Account Linked Successfully!",
+                                        "description": format!("Your Discord account has been linked to Minecraft account: **{}**", safe_minecraft_username),
+                                        "color": 0x00FF00,
+                                        "fields": [
+                                            {
+                                                "name": "Minecraft Username",
+                                                "value": safe_minecraft_username,
+                                                "inline": true
+                                            },
+                                            {
+                                                "name": "Discord ID",
+                                                "value": discord_id,
+                                                "inline": true
+                                            }
+                                        ],
+                                        "footer": {
+                                            "text": "Your accounts are now linked!"
+                                        }
+                                    }],
+                                    "flags": 64
+                                }
+                            });
+                            Ok(HttpResponse::Ok().json(response))
+                        } else {
+                            // Failed response from Minecraft server
+                            let error_message = link_data.message.unwrap_or_else(|| {
+                                format!("Verification failed (HTTP {})", status.as_u16())
+                            });
+
+                            // Sanitize error message
+                            let safe_error_message = error_message
+                                .chars()
+                                .filter(|c| {
+                                    c.is_alphanumeric()
+                                        || c.is_whitespace()
+                                        || ".,!?-_()[]:'\"".contains(*c)
+                                })
+                                .take(500)
+                                .collect::<String>();
+
+                            Err(InteractionError::Verification(safe_error_message))
                         }
                     }
                     "link" => {
@@ -510,7 +425,7 @@ async fn interactions(req: HttpRequest, body: web::Bytes) -> impl Responder {
                                 "flags": 64
                             }
                         });
-                        HttpResponse::Ok().json(response)
+                        Ok(HttpResponse::Ok().json(response))
                     }
                     _ => {
                         let response = serde_json::json!({
@@ -519,22 +434,21 @@ async fn interactions(req: HttpRequest, body: web::Bytes) -> impl Responder {
                                 "content": "Unknown command"
                             }
                         });
-                        HttpResponse::Ok().json(response)
+                        Ok(HttpResponse::Ok().json(response))
                     }
                 }
             } else {
-                HttpResponse::BadRequest().body("Missing interaction data")
+                Err(InteractionError::Internal("Missing interaction data".into()))
             }
         }
         _ => {
-            // Other interaction types
             let response = serde_json::json!({
                 "type": 4,
                 "data": {
                     "content": "Hello from Rust API!"
                 }
             });
-            HttpResponse::Ok().json(response)
+            Ok(HttpResponse::Ok().json(response))
         }
     }
 }
@@ -542,6 +456,9 @@ async fn interactions(req: HttpRequest, body: web::Bytes) -> impl Responder {
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     dotenv().ok();
+
+    // Initialize tracing
+    tracing_subscriber::fmt::init();
 
     // Get server configuration from environment variables with defaults
     let host = env::var("SERVER_HOST").unwrap_or_else(|_| "0.0.0.0".to_string());
