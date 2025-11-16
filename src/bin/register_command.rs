@@ -182,6 +182,26 @@ fn create_verify_command() -> Command {
     }
 }
 
+fn create_forgot_password_command() -> Command {
+    Command {
+        id: None,
+        name: "forgot-password".to_string(),
+        command_type: COMMAND_TYPE_CHAT_INPUT,
+        description: "Reset your password via Discord OAuth2 authentication".to_string(),
+        options: None,
+    }
+}
+
+fn create_reset_password_command() -> Command {
+    Command {
+        id: None,
+        name: "reset-password".to_string(),
+        command_type: COMMAND_TYPE_CHAT_INPUT,
+        description: "Reset your password via Discord OAuth2 authentication".to_string(),
+        options: None,
+    }
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenv().ok();
 
@@ -194,12 +214,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Unregister any existing commands
     unregister_commands_by_name(&client, &config, &existing_commands, "link")?;
     unregister_commands_by_name(&client, &config, &existing_commands, "verify")?;
+    unregister_commands_by_name(&client, &config, &existing_commands, "forgot-password")?;
+    unregister_commands_by_name(&client, &config, &existing_commands, "reset-password")?;
 
     // Register the commands
     let link_command = create_link_command();
     register_command(&client, &config, &link_command)?;
     let verify_command = create_verify_command();
     register_command(&client, &config, &verify_command)?;
+    let forgot_password_command = create_forgot_password_command();
+    register_command(&client, &config, &forgot_password_command)?;
+    let reset_password_command = create_reset_password_command();
+    register_command(&client, &config, &reset_password_command)?;
 
     Ok(())
 }

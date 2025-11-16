@@ -427,6 +427,40 @@ async fn handle_interaction(req: HttpRequest, body: web::Bytes) -> Result<HttpRe
                         });
                         Ok(HttpResponse::Ok().json(response))
                     }
+                    "forgot-password" | "reset-password" => {
+                        // Provide password reset instructions with button
+                        let response = serde_json::json!({
+                            "type": 4,
+                            "data": {
+                                "embeds": [{
+                                    "title": "🔒 Reset Your Password",
+                                    "description": "To reset your password, please click the button below to authenticate with Discord and reset your password.",
+                                    "color": 0x5865F2,
+                                    "footer": {
+                                        "text": "You will be redirected to kawaismp.net for password reset"
+                                    }
+                                }],
+                                "components": [
+                                    {
+                                        "type": 1,
+                                        "components": [
+                                            {
+                                                "type": 2,
+                                                "style": 5,
+                                                "label": "Reset Password",
+                                                "url": "https://discord.com/oauth2/authorize?client_id=749073299589300286&response_type=code&redirect_uri=https%3A%2F%2Fwww.kawaismp.net%2Fforgot-password&scope=identify+connections",
+                                                "emoji": {
+                                                    "name": "🔐"
+                                                }
+                                            }
+                                        ]
+                                    }
+                                ],
+                                "flags": 64
+                            }
+                        });
+                        Ok(HttpResponse::Ok().json(response))
+                    }
                     _ => {
                         let response = serde_json::json!({
                             "type": 4,
